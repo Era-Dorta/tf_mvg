@@ -165,6 +165,8 @@ class MultivariateNormal(tf.distributions.Distribution, DistSummary):
         return tf.exp(self._log_prob(x))
 
     def _sample_n(self, n, seed=None, epsilon=None):
+        if seed is not None and epsilon is None:
+            epsilon = self.cov_obj._get_epsilon(num_samples=n, seed=seed, epsilon=None)
         cov_sample = self.cov_obj.sample_covariance(num_samples=n, epsilon=epsilon, flatten_output=True)
 
         if cov_sample.shape.ndims == 2:

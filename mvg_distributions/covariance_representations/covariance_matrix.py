@@ -244,7 +244,7 @@ class Covariance(object):
                      dtype=cholesky_input.dtype)
         return tf.cholesky_solve(cholesky_input, eye, name=name)
 
-    def _build_epsilon(self, num_samples):
+    def _build_epsilon(self, num_samples, seed=None):
         with tf.name_scope("Epsilon"):
             # Epsilon is [batch size, num_samples, num features]
             if isinstance(num_samples, tf.Tensor) or isinstance(self._matrix_shape, tf.Tensor):
@@ -257,7 +257,7 @@ class Covariance(object):
                 assert num_samples >= 1, "Number of samples must be positive"
                 epsilon_shape = tf.TensorShape([self._matrix_shape[0], num_samples, self._matrix_shape[1]])
 
-            return tf.random_normal(shape=epsilon_shape, dtype=self.dtype, name="epsilon")
+            return tf.random_normal(shape=epsilon_shape, dtype=self.dtype, seed=seed, name="epsilon")
 
     def x_precision_x(self, x, mean_batch=False, no_gradients=False):
         # x shape should be [batch dim, num features]
@@ -278,9 +278,9 @@ class Covariance(object):
                 squared_error = tf.reduce_mean(squared_error, name="mean_x_precision_x")
             return squared_error
 
-    def _get_epsilon(self, num_samples, epsilon):
+    def _get_epsilon(self, num_samples, epsilon, seed=None):
         if epsilon is None:
-            epsilon = self._build_epsilon(num_samples)
+            epsilon = self._build_epsilon(num_samples, seed=seed)
         if epsilon.shape.ndims == 2:
             epsilon = tf.expand_dims(epsilon, 1)  # Epsilon should be [batch dim, 1, num features]
         epsilon.shape[0:3:2].assert_is_compatible_with(self.covariance.shape[0:3:2])

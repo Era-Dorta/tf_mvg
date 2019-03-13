@@ -38,10 +38,10 @@ class PrecisionConvFilters(Covariance):
     def _get_epsilon_flat_shape(self, num_samples):
         return tf.stack([self.sample_shape[0], num_samples, tf.reduce_prod(self.sample_shape[1:])], axis=0)
 
-    def _get_epsilon(self, num_samples, epsilon):
+    def _get_epsilon(self, num_samples, epsilon, seed=None):
         epsilon_shape = self._get_epsilon_flat_shape(num_samples)
         if epsilon is None:
-            epsilon = self._build_epsilon(epsilon_shape)
+            epsilon = self._build_epsilon(epsilon_shape, seed=seed)
         if epsilon.shape.ndims + 1 == epsilon_shape.shape[0].value:
             epsilon = tf.expand_dims(epsilon, 1)  # Epsilon should be [batch dim, 1, ...]
         return epsilon
@@ -49,10 +49,10 @@ class PrecisionConvFilters(Covariance):
     def _get_epsilon_img_shape(self, num_samples):
         return tf.concat([self.sample_shape[0:1], [num_samples], self.sample_shape[1:]], axis=0)
 
-    def _get_epsilon_5_dim(self, num_samples, epsilon):
+    def _get_epsilon_5_dim(self, num_samples, epsilon, seed=None):
         epsilon_shape = self._get_epsilon_img_shape(num_samples)
         if epsilon is None:
-            epsilon = self._build_epsilon(epsilon_shape)
+            epsilon = self._build_epsilon(epsilon_shape, seed=seed)
         if epsilon.shape.ndims == 2 or epsilon.shape.ndims == 3:
             # Input is flatten epsilon, reshape to 4 or 5 dim
             flat_shape = tf.shape(epsilon)
@@ -306,10 +306,10 @@ class PrecisionConvFilters(Covariance):
 
         return filters_shape, img_h, img_w
 
-    def _build_epsilon(self, epsilon_shape):
+    def _build_epsilon(self, epsilon_shape, seed=None):
         with tf.name_scope("Epsilon"):
             # Epsilon is [batch size, num samples, ...]
-            return tf.random_normal(shape=epsilon_shape, dtype=self.dtype, name="epsilon")
+            return tf.random_normal(shape=epsilon_shape, dtype=self.dtype, seed=seed, name="epsilon")
 
     def _sample_with_net(self, epsilon, filters, weights, name="sample_with_net"):
         return conv2d_samples_linear_combination_filters(inputs=epsilon, filters=filters,
