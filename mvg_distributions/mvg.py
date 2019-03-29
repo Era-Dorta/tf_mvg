@@ -251,7 +251,8 @@ class MultivariateNormalDiag(MultivariateNormal):
 
 
 class MultivariateNormalChol(MultivariateNormal):
-    def __init__(self, loc, chol_covariance=None, chol_precision=None, validate_args=False, allow_nan_stats=True,
+    def __init__(self, loc, chol_covariance=None, chol_precision=None, log_diag_chol_covariance=None,
+                 log_diag_chol_precision=None, validate_args=False, allow_nan_stats=True,
                  name="MultivariateNormalChol"):
         parameters = locals()
 
@@ -259,16 +260,28 @@ class MultivariateNormalChol(MultivariateNormal):
         graph_parents = None
 
         if chol_covariance is not None:
+            assert log_diag_chol_covariance is not None, 'Must provide log_diag of Cholesky matrix'
+
             chol_covariance = tf.convert_to_tensor(chol_covariance)
+            log_diag_chol_covariance = tf.convert_to_tensor(log_diag_chol_covariance)
+
             cov_obj = cov_rep.CovarianceCholesky(chol_covariance=chol_covariance)
-            graph_parents = [chol_covariance]
+            cov_obj.log_diag_chol_covariance = log_diag_chol_covariance
+
+            graph_parents = [chol_covariance, log_diag_chol_covariance]
 
             assert chol_precision is None
 
         if chol_precision is not None:
+            assert log_diag_chol_precision is not None, 'Must provide log_diag of Cholesky matrix'
+
             chol_precision = tf.convert_to_tensor(chol_precision)
+            log_diag_chol_precision = tf.convert_to_tensor(log_diag_chol_precision)
+
             cov_obj = cov_rep.PrecisionCholesky(chol_precision=chol_precision)
-            graph_parents = [chol_precision]
+            cov_obj.log_diag_chol_precision = log_diag_chol_precision
+
+            graph_parents = [chol_precision, log_diag_chol_precision]
 
             assert chol_covariance is None
 
@@ -397,6 +410,7 @@ class MultivariateNormalPrecCholFilters(MultivariateNormal):
 
         with tf.name_scope(name=name):
             weights_precision = tf.convert_to_tensor(weights_precision)
+            log_diag_chol_precision = tf.convert_to_tensor(log_diag_chol_precision)
             if filters_precision is not None:
                 filters_precision = tf.convert_to_tensor(filters_precision)
 

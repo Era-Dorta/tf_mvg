@@ -5,9 +5,50 @@ from mvg_distributions.covariance_representations.covariance_matrix import Covar
 
 class _CovarianceCholeskyCommon(Covariance):
     def __init__(self, inversion_method=None, **kwargs):
+        self._log_diag_chol_covariance = None
+        self._log_diag_chol_precision = None
+
         if inversion_method is None:
             inversion_method = DecompMethod.CHOLESKY
         super(_CovarianceCholeskyCommon, self).__init__(inversion_method=inversion_method, **kwargs)
+
+    @property
+    def log_diag_chol_covariance(self):
+        if self._log_diag_chol_covariance is None:
+            self._log_diag_chol_covariance = self._build_log_diag_chol_covariance()
+        return self._log_diag_chol_covariance
+
+    @log_diag_chol_covariance.setter
+    def log_diag_chol_covariance(self, value):
+        self._log_diag_chol_covariance = value
+
+    def _build_log_diag_chol_covariance(self):
+        with tf.name_scope("DiagCholCovariance"):
+            diag_c = tf.matrix_diag_part(self.chol_covariance, name="diag_chol_covariance")
+            return tf.log(diag_c, name="log_diag_chol_covariance")
+
+    @property
+    def log_diag_chol_precision(self):
+        if self._log_diag_chol_precision is None:
+            self._log_diag_chol_precision = self._build_log_diag_chol_precision()
+        return self._log_diag_chol_precision
+
+    @log_diag_chol_precision.setter
+    def log_diag_chol_precision(self, value):
+        self._log_diag_chol_precision = value
+
+    def _build_log_diag_chol_precision(self):
+        with tf.name_scope("DiagCholPrecision"):
+            diag_c = tf.matrix_diag_part(self.chol_precision, name="diag_chol_precision")
+            return tf.log(diag_c, name="log_diag_chol_precision")
+
+    def _build_log_det_covariance_with_chol(self):
+        with tf.name_scope("DiagCholCovariance"):
+            if self._build_with_covariance:
+                return 2.0 * tf.reduce_sum(self.log_diag_chol_covariance, axis=1, name="log_det_covar")
+            else:
+                log_det = 2.0 * tf.reduce_sum(self.log_diag_chol_precision, axis=1)
+                return tf.negative(log_det, name="log_det_covar")
 
 
 class CovarianceCholesky(_CovarianceCholeskyCommon):

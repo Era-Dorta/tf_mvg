@@ -176,11 +176,35 @@ class TestMultivariateNormalChol(TestMultivariateNormal):
     def _create_single_mvnd_pair(self):
         x, mu, covariance = self._random_normal_params(cov_rep.CovarianceCholesky)
         chol_covariance = np.linalg.cholesky(covariance)
+        log_diag_chol_covariance = np.log(np.diagonal(chol_covariance, axis1=1, axis2=2))
 
         mvnd_base = tf_dist.MultivariateNormalFullCovariance(loc=mu, covariance_matrix=covariance)
-        mvnd_test = custom_dist.MultivariateNormalChol(loc=mu, chol_covariance=chol_covariance)
+        mvnd_test = custom_dist.MultivariateNormalChol(loc=mu, chol_covariance=chol_covariance,
+                                                       log_diag_chol_covariance=log_diag_chol_covariance)
 
         return x, mvnd_base, mvnd_test
+
+
+class TestMultivariateNormalCholPrec(TestMultivariateNormal):
+    def _create_single_mvnd_pair(self):
+        x, mu, covariance = self._random_normal_params(cov_rep.CovarianceCholesky)
+        precision = np.linalg.inv(covariance)
+        chol_precision = np.linalg.cholesky(precision)
+        log_diag_chol_precision = np.log(np.diagonal(chol_precision, axis1=1, axis2=2))
+
+        mvnd_base = tf_dist.MultivariateNormalFullCovariance(loc=mu, covariance_matrix=covariance)
+        mvnd_test = custom_dist.MultivariateNormalChol(loc=mu, chol_precision=chol_precision,
+                                                       log_diag_chol_precision=log_diag_chol_precision)
+
+        return x, mvnd_base, mvnd_test
+
+    @unittest.skip("Samples with upper triangular matrix, need to fix")
+    def test_sample(self):
+        pass
+
+    @unittest.skip("Samples with upper triangular matrix, need to fix")
+    def test_sample_2(self):
+        pass
 
 
 class TestMultivariateNormalCholFilters(TestMultivariateNormal):
