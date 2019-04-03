@@ -55,6 +55,7 @@ The provided distributions are
 * **MultivariateNormalPrecCholFiltersDilation**: for sparse Cholesky precision matrices with dilated sparsity pattern
 * **IsotropicMultivariateNormal**: N(0,I) distribution, useful for numerically stable KL divergence with MultivariateNormalDiag
 * **CholeskyWishart**: a Cholesky-Whistart distribution, i.e. a distribution over Cholesky matrices
+* **Gamma**: a Gamma distribution that evaluates probabilities on log_values and samples log_values, useful for setting a prior on the *log_diag_precision* argument of a *MultivariateNormalDiag* distribution 
 
 ### Examples
 
