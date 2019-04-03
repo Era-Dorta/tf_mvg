@@ -56,7 +56,10 @@ def kl_divergence_mv_gaussian_v2(sigma1, sigma2, mu1=None, mu2=None, mean_batch=
         if mu2 is None:
             assert mu1 is None
 
-        tr_sig1_2 = tf.trace(tf.matmul(sigma2.precision, sigma1.covariance))
+        # This is equivalent to
+        # tr_sig1_2 = tf.trace(tf.matmul(sigma2.precision, sigma1.covariance))
+        # but it avoids doing the matmul for the off-diagonal elements
+        tr_sig1_2 = tf.einsum('bij,bji->b', sigma2.precision, sigma1.covariance)
 
         k = tf.cast(tf.shape(sigma1.covariance)[1], sigma1.covariance.dtype)
         log_det = sigma2.log_det_covariance() - sigma1.log_det_covariance()
