@@ -181,10 +181,12 @@ class Covariance(object):
 
     def _build_log_det_covariance_with_chol(self):
         if self._build_with_covariance:
-            return mvg_distributions.log_likelihoods._log_det_with_cholesky(cholesky=self.chol_covariance, dtype=self.dtype,
+            return mvg_distributions.log_likelihoods._log_det_with_cholesky(cholesky=self.chol_covariance,
+                                                                            dtype=self.dtype,
                                                                             out_name="log_det_covar")
         else:
-            log_det = mvg_distributions.log_likelihoods._log_det_with_cholesky(cholesky=self.chol_precision, dtype=self.dtype)
+            log_det = mvg_distributions.log_likelihoods._log_det_with_cholesky(cholesky=self.chol_precision,
+                                                                               dtype=self.dtype)
             return tf.negative(log_det, name="log_det_covar")
 
     def _build_log_det_covariance_with_lu(self):
@@ -270,7 +272,8 @@ class Covariance(object):
                 precision = tf.stop_gradient(self.precision)
             else:
                 precision = self.precision
-            squared_error = mvg_distributions.log_likelihoods._batch_squared_error_with_covariance(predictions=x, labels=None,
+            squared_error = mvg_distributions.log_likelihoods._batch_squared_error_with_covariance(predictions=x,
+                                                                                                   labels=None,
                                                                                                    inv_covariance=precision,
                                                                                                    name="impl",
                                                                                                    out_name="x_precision_x")
@@ -302,7 +305,8 @@ class Covariance(object):
             sample = tf.matmul(epsilon, chol_matrix)
         return self._squeeze_sample_dims(sample, name)
 
-    def _sample_or_whiten_with_inv_chol(self, chol_matrix, num_samples, epsilon, sample=True, name="sample_with_inv_chol"):
+    def _sample_or_whiten_with_inv_chol(self, chol_matrix, num_samples, epsilon, sample=True,
+                                        name="sample_with_inv_chol"):
         # (cholesky(covariance) * cholesky(covariance)^T)^-1 = (cholesky(covariance)^T)^-1 * cholesky(covariance)^-1
         # (cholesky(covariance)^-1)^T * epsilon = sample -> (cholesky(covariance)^-1)^T * sample = epsilon
         # Implicit inverse using a system of equations as we know that precision_cholesky is lower triangular
@@ -324,7 +328,8 @@ class Covariance(object):
                 if self._build_with_covariance:
                     sample_matrix = self.chol_covariance
                 else:
-                    return self._sample_or_whiten_with_inv_chol(chol_matrix=self.chol_precision, num_samples=num_samples,
+                    return self._sample_or_whiten_with_inv_chol(chol_matrix=self.chol_precision,
+                                                                num_samples=num_samples,
                                                                 epsilon=epsilon)
             else:
                 raise ValueError("Sampling can only be done with Sqrt or Cholesky")
@@ -340,7 +345,8 @@ class Covariance(object):
                 sample_matrix = self.sqrt_precision
             elif sample_method == SampleMethod.CHOLESKY:
                 if self._build_with_covariance:
-                    return self._sample_or_whiten_with_inv_chol(chol_matrix=self.chol_covariance, num_samples=num_samples,
+                    return self._sample_or_whiten_with_inv_chol(chol_matrix=self.chol_covariance,
+                                                                num_samples=num_samples,
                                                                 epsilon=x, sample=False)
                 else:
                     sample_matrix = self.chol_precision

@@ -181,7 +181,8 @@ class CovarianceTest(TFTest):
             np_x_p_x = np.zeros(shape=(self.batch_size, num_samples), dtype=self.dtype.as_numpy_dtype)
             for i in range(num_samples):
                 n_p_x_r = np.expand_dims(np_x[:, i, :], axis=1)
-                np_x_p_x[:,i] = np.matmul(np.matmul(n_p_x_r, self.np_precision), n_p_x_r.transpose([0, 2, 1])).squeeze()
+                np_x_p_x[:, i] = np.matmul(np.matmul(n_p_x_r, self.np_precision),
+                                           n_p_x_r.transpose([0, 2, 1])).squeeze()
             np_x_p_x = np_x_p_x.squeeze()
             tf_x_p_x = self.cov_object.x_precision_x(x=tf.constant(np_x), mean_batch=do_mean)
             if do_mean:

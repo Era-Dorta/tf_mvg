@@ -222,27 +222,95 @@ class TestMultivariateNormalCholFilters(TestMultivariateNormal):
 
         return x, mvnd_base, mvnd_test
 
+    @staticmethod
+    def _upper_triangular_chol_matrix(matrix):
+        upper_chol_matrix = tf.cholesky(tf.matrix_inverse(matrix))
+        upper_chol_matrix = tf.matrix_inverse(upper_chol_matrix)
+        return tf.matrix_transpose(upper_chol_matrix)
+
     def test_sample(self):
         eps = self.mvnd_test.cov_obj._get_epsilon(num_samples=1, epsilon=None)
         sample1 = self.mvnd_test.sample_with_epsilon(epsilon=eps)
 
         # Chol filters samples with the transpose of the inverse of Cholesky of the precision matrix
         # i.e. with a valid upper triangular decomposition of the covariance
-        chol_precision = tf.cholesky(tf.matrix_inverse(self.mvnd_base.covariance()))
-        sqrt_covariance_t = tf.matrix_inverse(chol_precision)
+        upper_chol_covariance = self._upper_triangular_chol_matrix(self.mvnd_base.covariance())
 
-        sample2 = tf.matmul(sqrt_covariance_t, eps, transpose_a=True, transpose_b=True)
+        sample2 = tf.matmul(upper_chol_covariance, eps, transpose_b=True)
         sample2 = tf.squeeze(sample2, axis=2) + self.mvnd_base.loc
 
         self._asset_allclose_tf_feed(sample1, sample2)
 
         # Check that sqrt_covariance is indeed a valid decomposition by reconstructing the covariance matrix
-        recons_covariance = tf.matmul(sqrt_covariance_t, sqrt_covariance_t, transpose_a=True)
+        recons_covariance = tf.matmul(upper_chol_covariance, upper_chol_covariance, transpose_b=True)
         self._asset_allclose_tf_feed(recons_covariance, self.mvnd_base.covariance())
 
     @unittest.skip("Samples with upper triangular matrix, need to fix")
     def test_sample_2(self):
         pass
+
+    def test_sample_sparse_solver(self):
+        sample1 = self.mvnd_test.sample(seed=0)
+        sample2 = self.mvnd_test.sample_with_sparse_solver(seed=0, sess=self.sess,
+                                                           feed_dict=self.tf_feed)
+
+        self._asset_allclose_tf_feed(sample1, sample2)
+
+    def test_chol_covariance_sparse_solver(self):
+        covariance1 = self.mvnd_base.covariance()
+        chol_covariance1 = self._upper_triangular_chol_matrix(covariance1)
+
+        chol_covariance2 = self.mvnd_test.upper_chol_covariance_with_sparse_solver(sess=self.sess,
+                                                                                   feed_dict=self.tf_feed)
+
+        covariance2 = np.matmul(chol_covariance2, chol_covariance2.transpose((0, 2, 1)))
+
+        self._asset_allclose_tf_feed(chol_covariance1, chol_covariance2)
+        self._asset_allclose_tf_feed(covariance1, covariance2)
+
+    def test_covariance_sparse_solver(self):
+        covariance1 = self.mvnd_base.covariance()
+        covariance2 = self.mvnd_test.covariance_with_sparse_solver(sess=self.sess,
+                                                                   feed_dict=self.tf_feed)
+
+        self._asset_allclose_tf_feed(covariance1, covariance2)
+
+    def test_variance_sparse_solver(self):
+        variance1 = self.mvnd_base.variance()
+        variance2 = self.mvnd_test.variance_with_sparse_solver(sess=self.sess,
+                                                               feed_dict=self.tf_feed,
+                                                               use_iterative_solver=True)
+
+        self._asset_allclose_tf_feed(variance1, variance2)
+
+    def test_variance_sparse_solver2(self):
+        variance1 = self.mvnd_base.variance()
+        variance2 = self.mvnd_test.variance_with_sparse_solver(sess=self.sess,
+                                                               feed_dict=self.tf_feed,
+                                                               use_iterative_solver=False)
+        self._asset_allclose_tf_feed(variance1, variance2)
+
+    def test_conditional_mean(self):
+        # Condition on 1, 2 or 5 pixels
+        num_x_cond_list = [1, 2, 5]
+        solver_methods = custom_dist.MultivariateNormalPrecCholFilters.CondMeanSolver
+
+        for num_x_cond in num_x_cond_list:
+            # Get random conditioning values, and random indices
+            np_x_cond = np.random.normal(size=(self.batch_size, num_x_cond)).astype(self.dtype.as_numpy_dtype)
+            np_x_cond_idx = np.random.choice(self.features_size, num_x_cond, replace=False)
+
+            cond_means = [None] * len(solver_methods)
+            for i, solver_method in enumerate(solver_methods):
+                cond_means[i] = self.mvnd_test.conditional_mean(sess=self.sess,
+                                                                feed_dict=self.tf_feed,
+                                                                x_known=np_x_cond,
+                                                                x_known_idx=np_x_cond_idx,
+                                                                solver_method=solver_method)
+
+            # Check that we get the same result regardless of the solver method
+            for i in range(1, len(cond_means)):
+                self._assert_allclose_np_np(cond_means[0], cond_means[i])
 
 
 class TestMultivariateNormalCholFiltersDilation(TestMultivariateNormalCholFilters):
@@ -261,6 +329,30 @@ class TestMultivariateNormalCholFiltersDilation(TestMultivariateNormalCholFilter
                                                                           dilation_rates=dilation_rates)
 
         return x, mvnd_base, mvnd_test
+
+    @unittest.skip("Sparse sampler not implemented for dilated filters")
+    def test_sample_sparse_solver(self):
+        pass
+
+    @unittest.skip("Sparse sampler not implemented for dilated filters")
+    def test_chol_covariance_sparse_solver(self):
+        pass
+
+    @unittest.skip("Sparse solver not implemented for dilated filters")
+    def test_covariance_sparse_solver(self):
+        pass
+
+    @unittest.skip("Sparse solver not implemented for dilated filters")
+    def test_variance_sparse_solver(self):
+        pass
+
+    @unittest.skip("Sparse solver not implemented for dilated filters")
+    def test_variance_sparse_solver2(self):
+        pass
+
+    @unittest.skip("Sparse solver not implemented for dilated filters")
+    def test_conditional_mean(self):
+        pass
 
 
 class TestIsotropicMultivariateNormal(TestMultivariateNormal):

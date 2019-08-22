@@ -120,6 +120,22 @@ class PrecisionConvCholFiltersTest(CovarianceTest):
 
             np.testing.assert_allclose(np_net_sample, np_sqrt_sample, rtol=self.rtol, atol=self.atol)
 
+    def test_sampling_sparse(self):
+        for num_samples in range(1, 4, 2):
+            np_x = np.random.normal(size=(self.batch_size, num_samples, self.features_size)).astype(
+                self.dtype.as_numpy_dtype)
+            np_x = tf.constant(np_x)
+
+            tf_sqrt_sample = self.cov_object.sample_covariance(epsilon=np_x,
+                                                               sample_method=self.equivalent_sample_method)
+
+            np_net_sample = self.cov_object.sample_with_sparse_solver(u=np_x, sess=self.sess, feed_dict=self.tf_feed)
+            np_sqrt_sample = self.sess.run(tf_sqrt_sample, feed_dict=self.tf_feed)
+
+            np_net_sample = np_net_sample.reshape(np_sqrt_sample.shape)
+
+            np.testing.assert_allclose(np_net_sample, np_sqrt_sample, rtol=self.rtol, atol=self.atol)
+
     def test_diag_sqrt_covariance(self):
         return  # Not applicable
 
@@ -152,9 +168,24 @@ class PrecisionConvCholFiltersTest(CovarianceTest):
 
         np.testing.assert_allclose(np_log_diag_chol_precision, log_diag_chol_precision, rtol=self.rtol, atol=self.atol)
 
+    def test_diag_covariance_sparse(self):
+        np_diag = self.np_covariance.diagonal(axis1=1, axis2=2)
+        np_diag_sparse = self.cov_object.variance_with_sparse_solver(sess=self.sess, feed_dict=self.tf_feed,
+                                                                     use_iterative_solver=True)
+        self._assert_allclose_np_np(np_diag_sparse, np_diag)
+
+    def test_diag_covariance_sparse2(self):
+        np_diag = self.np_covariance.diagonal(axis1=1, axis2=2)
+        np_diag_sparse = self.cov_object.variance_with_sparse_solver(sess=self.sess, feed_dict=self.tf_feed,
+                                                                     use_iterative_solver=False)
+        self._assert_allclose_np_np(np_diag_sparse, np_diag)
+
+    def test_covariance_sparse(self):
+        np_covar_sparse = self.cov_object.covariance_with_sparse_solver(sess=self.sess, feed_dict=self.tf_feed)
+        self._assert_allclose_np_np(np_covar_sparse, self.np_covariance)
+
 
 class PrecisionConvCholFiltersIdTest(PrecisionConvCholFiltersTest):
-
     def _set_covariance_size(self):
         self.filter_size = 3
         self.num_basis = self.filter_size ** 2
@@ -400,6 +431,22 @@ class PrecisionDilatedConvCholFiltersTest(PrecisionConvCholFiltersTest):
     # This test fails on 7% error, but all the other tests are fine so ignoring for now
     @unittest.skip("Must fix diag precision")
     def test_diag_precision(self):
+        pass
+
+    @unittest.skip("Not implemented")
+    def test_diag_covariance_sparse(self):
+        pass
+
+    @unittest.skip("Not implemented")
+    def test_diag_covariance_sparse2(self):
+        pass
+
+    @unittest.skip("Not implemented")
+    def test_covariance_sparse(self):
+        pass
+
+    @unittest.skip("Not implemented")
+    def test_sampling_sparse(self):
         pass
 
 

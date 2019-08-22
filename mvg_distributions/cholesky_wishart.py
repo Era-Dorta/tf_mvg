@@ -1,7 +1,7 @@
 import tensorflow as tf
 import mvg_distributions.covariance_representations as cov_rep
 import numpy as np
-from tensorflow.python.ops.distributions.util import gen_new_seed
+from tensorflow_probability.python.distributions import seed_stream
 
 
 class CholeskyWishart(tf.distributions.Distribution):
@@ -9,9 +9,9 @@ class CholeskyWishart(tf.distributions.Distribution):
     If a p-dimensional vector x follows a multivariate Normal distribution x ~ N(mu, S)
     The inverse covariance S^{-1} = L follows a Wishart distribution L ~ WI(df, Scale)
     The matrices from the Cholesky decomposition L = M M^T follow a Cholesky-Wishart distribution
-        M ~ SqrtWI(df, Scale)
+        M ~ Chol-WI(df, Scale)
 
-    The probability density function (pdf) of the SqrtWI is given by a transformation of the Wishart distribution pdf
+    The probability density function (pdf) of the Chol-WI is given by a transformation of the Wishart distribution pdf
         pdf(M) = WI(L; df, Scale) J, where J = 2^p prod_{j=0}^{p-1} M[j,j]^{p-j}.
 
     The pdf of a Wishart distribution is given by
@@ -57,7 +57,8 @@ class CholeskyWishart(tf.distributions.Distribution):
 
     """
 
-    def __init__(self, df, log_diag_scale, validate_args=False, allow_nan_stats=True, name="SqrtWishart"):
+    def __init__(self, df, log_diag_scale, add_sparsity_correction=False, add_mode_correction=False,
+                 validate_args=False, allow_nan_stats=True, name="SqrtWishart"):
         """
 
         Args:
@@ -65,6 +66,9 @@ class CholeskyWishart(tf.distributions.Distribution):
 
             df: degrees of freedom, a tensor of [b], the values in it must be df > p - 1
             log_diag_scale: a tensor of [b, p] with the log diagonal values of the matrix S
+            add_sparsity_correction: bool, if True removes from the likelihood the sparse terms in L
+            add_mode_correction: bool, if using the distribution as a prior, setting this to True will add
+                a correction factor to log_diag_scale, such that the log_prob will have the maximum in S
             validate_args:
             allow_nan_stats:
             name:
@@ -80,11 +84,14 @@ class CholeskyWishart(tf.distributions.Distribution):
 
         self._df = df
         self._log_diag_scale = log_diag_scale
+        self.add_sparsity_correction = add_sparsity_correction
         graph_parents = [df, log_diag_scale]
 
         self.p = self.log_diag_scale.shape[1].value
         if self.p is None:
             self.p = tf.shape(self.log_diag_scale)[1]
+
+        self._mode_correction_factor(add_mode_correction)
 
         super().__init__(dtype=self.df.dtype, reparameterization_type=tf.distributions.FULLY_REPARAMETERIZED,
                          validate_args=validate_args, allow_nan_stats=allow_nan_stats, parameters=parameters,
@@ -99,6 +106,14 @@ class CholeskyWishart(tf.distributions.Distribution):
     def log_diag_scale(self):
         """Cholesky-Wishart distribution log diagonal of the scale matrix."""
         return self._log_diag_scale
+
+    def _mode_correction_factor(self, add_mode_correction):
+        if add_mode_correction:
+            # corrected_diag_scale =  diag_scale * ((p - 1)/(tf.range(p) * (1 - p) + (p - 1) * (df - 1)))
+            correction_factor = tf.log(self.p - 1.)
+            p_range = tf.range(self.p, dtype=self._log_diag_scale.dtype)[tf.newaxis, :]
+            correction_factor -= tf.log(p_range * (1. - self.p) + (self.p - 1.) * (self.df[:, tf.newaxis] - 1.))
+            self._log_diag_scale += correction_factor
 
     def _batch_shape_tensor(self):
         return tf.shape(self.log_diag_scale)[0]
@@ -184,15 +199,7 @@ class CholeskyWishart(tf.distributions.Distribution):
                 except NotImplementedError:
                     raise original_exception
 
-    def _log_prob(self, x):
-        diag_inv_scale = tf.exp(-self.log_diag_scale)
-
-        # Log determinant of the precision matrix
-        log_det_precision = -x.log_det_covariance()
-
-        # trace( inv(Scale) @ Precision )
-        trace_scale_inv_x = tf.reduce_sum(diag_inv_scale * x.precision_diag_part, axis=1)
-
+    def _log_det_jacobian(self, x):
         # Create a vector equal to: [p, p-1, ..., 2, 1].
         if isinstance(self.p, tf.Tensor):
             p_float = tf.cast(self.p, dtype=x.dtype)
@@ -209,13 +216,65 @@ class CholeskyWishart(tf.distributions.Distribution):
         # Log determinant of the Jacobian
         ldj = tf.reduce_sum(log_diag_chol_precision * exponents, axis=1)
         ldj += p_float * tf.log(2.)
+        return ldj
+
+    def _log_unnormalized_prob(self, x):
+        diag_inv_scale = tf.exp(-self.log_diag_scale)
+
+        # Log determinant of the precision matrix
+        log_det_precision = -x.log_det_covariance()
+
+        # trace( inv(Scale) @ Precision )
+        trace_scale_inv_x = tf.reduce_sum(diag_inv_scale * x.precision_diag_part, axis=1)
 
         # Un-normalized Wishart log probability
-        log_prob = (self.df - self.p - 1) * 0.5 * log_det_precision - 0.5 * trace_scale_inv_x
+        return (self.df - self.p - 1) * 0.5 * log_det_precision - 0.5 * trace_scale_inv_x
 
-        # Add normalization and log determinant of the Jacobian
-        log_prob += -self.log_normalization() + ldj
+    @staticmethod
+    def _get_num_sparse_per_row(x):
+        """
+        Get an array with the number of sparse elements per row. The upper triangular elements are not considered
+          sparse for this function, the diagonal is not sparse either.
 
+        :param x: a PrecisionConvCholFilters instance
+        :return: ndarray of size [n], where n is the number of pixels
+        """
+        n = x.recons_filters_precision.shape[1].value
+
+        np_off_diag_mask = x.np_off_diag_mask()
+
+        sparse_per_row = np.sum(1 - np_off_diag_mask, axis=1)  # Sum over columns to get number per row
+
+        # Number of sparse elements per row by construction due to the the matrix being upper triangular
+        upper_triangular = np.arange(n, 0, -1)
+        sparse_per_row -= upper_triangular  # Do not take into account the upper triangular part
+        return np.maximum(sparse_per_row, 0)
+
+    def _log_sparsity_correction(self, x):
+        # The sparsity correction factor evaluates N(0, v) for all sparse off-diagonal elements
+        error_msg = "Sparsity correction is only supported for PrecisionConvCholFilters"
+        assert isinstance(x, cov_rep.PrecisionConvCholFilters), error_msg
+
+        num_sparse_per_row = self._get_num_sparse_per_row(x)
+        num_sparse_per_row = num_sparse_per_row[np.newaxis, :]  # Add batch dim
+
+        sqrt_scale = tf.exp(0.5 * self.log_diag_scale)
+
+        # The sparse elements are zero, so it's log prob of 0 with size [batch, n]
+        normal_dist = tf.distributions.Normal(loc=0.0, scale=sqrt_scale)
+        zero_prob = normal_dist.log_prob(0.0)
+
+        # Each ith row has its own v_i, so for each row the probability is evaluated according to v_i
+        # for the the number of sparse elements in the row
+        log_prob = zero_prob * num_sparse_per_row
+
+        # Sum over pixels, so that output is size [b]
+        return tf.reduce_sum(log_prob, axis=1)
+
+    def _log_prob(self, x):
+        log_prob = self._log_unnormalized_prob(x) + self._log_det_jacobian(x) - self.log_normalization()
+        if self.add_sparsity_correction:
+            log_prob -= self._log_sparsity_correction(x)
         return log_prob
 
     def _sample_n(self, n, seed=None):
@@ -223,14 +282,16 @@ class CholeskyWishart(tf.distributions.Distribution):
         batch_shape = self.batch_shape_tensor()
         event_shape = self.event_shape_tensor()
 
+        stream = seed_stream.SeedStream(seed=seed, salt="Wishart")
+
         shape = tf.concat([[n], batch_shape, event_shape], 0)
 
         # Sample a normal full matrix
-        x = tf.random_normal(shape=shape, dtype=self.dtype, seed=seed)
+        x = tf.random_normal(shape=shape, dtype=self.dtype, seed=stream())
 
         # Sample the diagonal
         g = tf.random_gamma(shape=[n], alpha=self._multi_gamma_sequence(0.5 * self.df, self.p), beta=0.5,
-                            dtype=self.dtype, seed=gen_new_seed(seed, "wishart"))
+                            dtype=self.dtype, seed=stream())
 
         # Discard the upper triangular part
         x = tf.matrix_band_part(x, -1, 0)
@@ -253,17 +314,19 @@ class CholeskyWishart(tf.distributions.Distribution):
         nb_half = nb // 2 + 1
         nch = 1  # Number of channels in the image
 
+        stream = seed_stream.SeedStream(seed=seed, salt="Wishart")
+
         shape = tf.concat([batch_shape, [iw, iw, nb_half - 1]], 0)
 
         # Random sample for the off diagonal values as a dense tensor
-        x_right = tf.random_normal(shape=shape, dtype=self.dtype, seed=seed)
+        x_right = tf.random_normal(shape=shape, dtype=self.dtype, seed=stream())
 
         # The upper triangular values needed to get a square kernel per pixel
         x_left = tf.zeros(shape)
 
         # Random sample for the diagonal of the matrix
         x_diag = tf.random_gamma(shape=[n], alpha=self._multi_gamma_sequence(0.5 * self.df, self.p), beta=0.5,
-                                 dtype=self.dtype, seed=gen_new_seed(seed, "wishart"))
+                                 dtype=self.dtype, seed=stream())
 
         # Concatenate the diagonal and off-diagonal elements
         x_diag = tf.reshape(x_diag, (-1, iw, iw, nch))
@@ -295,3 +358,20 @@ class CholeskyWishart(tf.distributions.Distribution):
             sample_shape = tf.convert_to_tensor(sample_shape, dtype=tf.int32, name="sample_shape")
             sample_shape, n = self._expand_sample_shape_to_vector(sample_shape, "sample_shape")
             return self._sample_n_sparse(n, kw, seed)
+
+
+class Wishart(CholeskyWishart):
+    """ A Wishart distribution that can be evaluated using a covariance matrix parametrised as
+        PrecisionConvCholFilters """
+
+    def _log_prob(self, x):
+        log_prob = self._log_unnormalized_prob(x) - self.log_normalization()
+        if self.add_sparsity_correction:
+            raise NotImplementedError("")
+            # Not sure if the sparsity correction is the same as the Cholesky-Wishart or not
+            # log_prob -= self._log_sparsity_correction(x)
+        return log_prob
+
+    def _sample_n(self, n, seed=None):
+        chol_x = super()._sample_n(n, seed=seed)
+        return tf.matmul(chol_x, chol_x, transpose_b=True)

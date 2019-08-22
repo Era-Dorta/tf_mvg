@@ -10,7 +10,6 @@ tfd = tensorflow_probability.distributions
 
 
 class LogLikelihoodsTest(LossesTestBase):
-
     def test_neg_log_likelihood_mv_gaussian_diag(self):
         x, mu, sigma_sq = self._random_normal_params(cov_rep.CovarianceDiag)
 
@@ -90,13 +89,13 @@ class LogLikelihoodsTest(LossesTestBase):
         x, mu, sigma_sq = self._random_normal_params(cov_rep.CovarianceDiag)
         mu = tf.zeros((self.batch_size, self.features_size))
         sigma_sq = tf.random_gamma((self.batch_size, 1), 10.0, 0.1)
-        sigma_sq = tf.concat([sigma_sq for i in range(self.features_size)],axis=1)
-        x = mu + sigma_sq*tf.random_normal(sigma_sq.shape)
+        sigma_sq = tf.concat([sigma_sq for i in range(self.features_size)], axis=1)
+        x = mu + sigma_sq * tf.random_normal(sigma_sq.shape)
 
         tf_mvnd = tfd.MultivariateNormalDiag(loc=mu, scale_diag=tf.sqrt(sigma_sq))
         tf_nll = - tf_mvnd.log_prob(x)
 
-        nll = neg_log_likelihood_spherical_gaussian(x, tf.log(sigma_sq[:, 0]),mean_batch=False)
+        nll = neg_log_likelihood_spherical_gaussian(x, tf.log(sigma_sq[:, 0]), mean_batch=False)
 
         self._asset_allclose_tf_feed(nll, tf_nll)
 

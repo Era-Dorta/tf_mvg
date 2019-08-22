@@ -158,16 +158,26 @@ mvg = mvg_dist.MultivariateNormalPrecCholFilters(loc=predictions_mean_flat, weig
                                                  log_diag_chol_precision=predictions_log_diag,
                                                  sample_shape=img_shape)
 
-# Note that sampling is a slow and memory hungry operation as it builds the dense matrix
-# representation of the Cholesky of the precision matrix (chol_precision_weights)
-tf_prediction_sample = mvg.sample()
-tf_prediction_sample = tf.reshape(tf_prediction_sample, (b, w, h))
+sampling_with_sparse_solver = True
+
+if not sampling_with_sparse_solver:
+    # Note that sampling is a slow and memory hungry operation as it builds the dense matrix
+    # representation of the Cholesky of the precision matrix (chol_precision_weights)
+    tf_prediction_sample = mvg.sample()
+    tf_prediction_sample = tf.reshape(tf_prediction_sample, (b, w, h))
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 sess = tf.Session(config=config)
 
-predictions_sample = sess.run(tf_prediction_sample)
+if not sampling_with_sparse_solver:
+    predictions_sample = sess.run(tf_prediction_sample)
+else:
+    # Note that sampling is a relatively slow operation as it needs to build a
+    # sparse matrix and solve a system of equations, both of which need to happen
+    # CPU as TensorFlow lacks support for sparse solvers
+    predictions_sample = mvg.sample_with_sparse_solver(sess=sess)
+    predictions_sample = np.reshape(predictions_sample, (b, w, h))
 
 # The samples could be out of range, clip to image space
 predictions_sample = np.clip(predictions_sample, 0, 1)

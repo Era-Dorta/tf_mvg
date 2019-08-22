@@ -12,7 +12,6 @@ dist = tensorflow_probability.distributions
 
 
 class KLDivergenceTest(LossesTestBase):
-
     def _convert_to_tensor(self, *args):
         out_vals = []
         for arg in args:

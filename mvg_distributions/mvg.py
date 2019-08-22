@@ -1,6 +1,9 @@
 import tensorflow as tf
 import tensorflow_probability
 import numpy as np
+import numpy.testing as npt
+from tqdm import trange
+from enum import Enum
 
 import mvg_distributions.covariance_representations as cov_rep
 import mvg_distributions.log_likelihoods as ll
@@ -294,6 +297,11 @@ class MultivariateNormalChol(MultivariateNormal):
 
 
 class MultivariateNormalPrecCholFilters(MultivariateNormal):
+    class CondMeanSolver(Enum):
+        SIMPLE = 0
+        FAST = 1
+        MEMORY = 2
+
     def __init__(self, loc, weights_precision, filters_precision, log_diag_chol_precision, sample_shape,
                  validate_args=False, allow_nan_stats=True, name="MultivariateNormalCholFilters"):
         """
@@ -423,6 +431,217 @@ class MultivariateNormalPrecCholFilters(MultivariateNormal):
                          name=name)
         self._parameters = parameters
 
+    def sample_with_sparse_solver(self, sample_shape=(), seed=None, name="sample", sess=None, feed_dict=None):
+        """ Sample from the distribution using a sparse solver. As TensorFlow lacks support for sparse
+            solver this is done on CPU with scipy. That means that gradients are not back-propagated
+            and the output of this operation is a numpy array """
+        with tf.name_scope(name=name):
+            sample_shape = tf.convert_to_tensor(sample_shape, dtype=tf.int32, name="sample_shape")
+            sample_shape, n = self._expand_sample_shape_to_vector(sample_shape, "sample_shape")
+
+            if not tf.executing_eagerly():
+                tensor_list = []
+                if isinstance(n, tf.Tensor):
+                    tensor_list.append(n)
+                if isinstance(sample_shape, tf.Tensor):
+                    tensor_list.append(sample_shape)
+
+                if not (tensor_list is []):
+                    assert isinstance(sess, tf.Session)
+                    tensor_list = sess.run(tensor_list, feed_dict=feed_dict)
+
+                if isinstance(n, tf.Tensor) and isinstance(sample_shape, tf.Tensor):
+                    n, sample_shape = tensor_list
+                elif isinstance(n, tf.Tensor):
+                    n = tensor_list[0]
+                else:
+                    sample_shape = tensor_list[0]
+
+            epsilon = self.cov_obj.sample_with_sparse_solver(num_samples=n, seed=seed,
+                                                             sess=sess, feed_dict=feed_dict)
+            # Transpose to [num samples, batch size, num features]
+            epsilon = np.transpose(epsilon, axes=(1, 0, 2))
+
+            loc = tf.expand_dims(self.loc, axis=0)  # Add num samples dim
+            if not tf.executing_eagerly():
+                assert isinstance(sess, tf.Session)
+                loc = sess.run(self.loc, feed_dict=feed_dict)
+
+            samples = epsilon + loc
+
+            # Reshape back to sample_shape + [num_features]
+            batch_event_shape = np.shape(samples)[1:]
+            final_shape = np.concatenate([sample_shape, batch_event_shape], 0)
+            samples = np.reshape(samples, final_shape)
+
+            return samples
+
+    def covariance_with_sparse_solver(self, name="covariance", sess=None, feed_dict=None):
+        """ Get the covariance matrix using a sparse solver. As TensorFlow lacks support for sparse
+            solver this is done on CPU with scipy. That means that gradients are not back-propagated
+            and the output of this operation is a numpy array """
+        with tf.name_scope(name=name):
+            return self.cov_obj.covariance_with_sparse_solver(sess=sess, feed_dict=feed_dict)
+
+    def variance_with_sparse_solver(self, name="variance", sess=None, feed_dict=None,
+                                    use_iterative_solver=True):
+        """ Get the diagonal of the covariance matrix using a sparse solver. As TensorFlow lacks
+            support for sparse solver this is done on CPU with scipy. That means that gradients
+            are not back-propagated and the output of this operation is a numpy array.
+
+             The iterative solver is slower but decreases the memory consumption to from
+             n**2 to  n * (nf // 2), where n is the dimensionality of loc"""
+        with tf.name_scope(name=name):
+            return self.cov_obj.variance_with_sparse_solver(sess=sess, feed_dict=feed_dict,
+                                                            use_iterative_solver=use_iterative_solver)
+
+    def upper_chol_covariance_with_sparse_solver(self, name="covariance", sess=None, feed_dict=None,
+                                                 use_sparse_format=False):
+        """ Get the upper triangular cholesky of the covariance matrix using a sparse solver.
+            S = M M^T, where S is the covariance matrix and M is an upper triangular matrix.
+            This method returns the M matrix, [batch, num features, num features].
+
+            As TensorFlow lacks support for sparse solver this is done on CPU with scipy. That means
+            that gradients are not back-propagated and the output of this operation is a numpy array """
+        with tf.name_scope(name=name):
+            return self.cov_obj.upper_chol_covariance_with_sparse_solver(sess=sess, feed_dict=feed_dict,
+                                                                         sparse_format=use_sparse_format)
+
+    def conditional_mean(self, x_known, x_known_idx, name='conditional_mean', sess=None, feed_dict=None,
+                         solver_method=CondMeanSolver.FAST):
+        """ Evaluate the mean of the distribution given that we know the ground truth value of x_know,
+            which is the element located at x_known_idx.
+
+            Following notation from the book "Computer Vision: models and learning and inference"
+            where x1 are the unknown variables, and x2 are the known ones.
+            Equation 5.13 says that the new_mu1 = mu_1 + (covariance_21)^T (covariance_22)^{-1} (x_2 - mu_2)
+
+            As TensorFlow lacks support for sparse solver covariance_21 and covariance_22 are evaluated on
+            on CPU with scipy. That means that gradients are not back-propagated and the output of this
+            operation is a numpy array
+
+        :param x_known: the known value of the elements in x per batch, [batch, m]
+        :param x_known_idx: the indices of the known values, [m]
+        :param name: name for the operation, string
+        :param sess: a tensorflow session, optional
+        :param feed_dict: feed_dict for the tensorflow session, optional
+        :param solver_method: the solver method to use:
+            SIMPLE: slow and memory hungry method, but with very a simple implementation, used for verification
+            FAST: faster method, but with a memory cost of O(n * n)
+            MEMORY: method that is roughly twice as slow as FAST, but that it has a is a memory cost of
+                O(n * nc + n * num_x_known)
+        :return:
+            It returns the updated mean of the distribution, [batch, num_features - m]
+        """
+        with tf.name_scope(name=name):
+            assert isinstance(x_known, np.ndarray) and isinstance(x_known_idx, np.ndarray)
+            assert x_known.ndim == 2 and x_known_idx.ndim == 1
+            assert isinstance(solver_method, self.CondMeanSolver)
+
+            np_loc = self.loc
+            if not tf.executing_eagerly():
+                assert isinstance(sess, tf.Session)
+                np_loc = sess.run(self.loc, feed_dict=feed_dict)
+
+            x2 = x_known
+            x2_idx = x_known_idx
+
+            # The x1 indices are the indices that are not in x2
+            n = np_loc.shape[1]
+            x1_idx = np.arange(n)
+            x1_idx = np.delete(x1_idx, x2_idx)
+
+            np_loc1 = np_loc[:, x1_idx]
+            np_loc2 = np_loc[:, x2_idx]
+
+            if solver_method == self.CondMeanSolver.SIMPLE:
+                solver_fnc = self._conditional_mean_covariance_21_22_simple
+            elif solver_method == self.CondMeanSolver.FAST:
+                solver_fnc = self._conditional_mean_covariance_21_22_fast
+            elif solver_method == self.CondMeanSolver.MEMORY:
+                solver_fnc = self._conditional_mean_covariance_21_22_memory
+            else:
+                raise RuntimeError("Invalid solver method {}".format(solver_method))
+
+            np_covariance_21, np_covariance_22 = solver_fnc(x1_idx=x1_idx, x2_idx=x2_idx,
+                                                            sess=sess, feed_dict=feed_dict)
+
+            # x1_new_mean = mu_1 + (covariance_21)^T (covariance_22)^{-1} (x_2 - mu_2)
+            np_precision_22 = np.linalg.inv(np_covariance_22)
+            np_x2_effect = np.matmul(np_precision_22, (x2 - np_loc2)[:, :, np.newaxis])
+            np_x2_effect = np.matmul(np_covariance_21.transpose((0, 2, 1)), np_x2_effect)[:, :, 0]
+            np_loc1 += np_x2_effect
+
+            return np_loc1
+
+    def _conditional_mean_covariance_21_22_simple(self, x1_idx, x2_idx, sess, feed_dict):
+        # Compute the full covariance matrix, and then get covariance_21 and covariance_22
+        np_covariance = self.cov_obj.covariance_with_sparse_solver(sess=sess, feed_dict=feed_dict)
+
+        np_covariance_x2_rows = np_covariance[:, x2_idx]
+
+        np_covariance_22 = np_covariance_x2_rows[:, :, x2_idx]
+        np_covariance_21 = np_covariance_x2_rows[:, :, x1_idx]
+
+        return np_covariance_21, np_covariance_22
+
+    def _conditional_mean_covariance_21_22_fast(self, x1_idx, x2_idx, sess, feed_dict):
+        # This is a faster implementation that avoids computing rows in Sigma that will not be used
+        # Get the upper triangular Cholesky matrix of the Covariance, it comes in a sparse format of
+        # ndarray with [batch size, num rows], where each row is another ndarray with the non zero elements
+        # as the matrix is dense and upper triangular, no indices are needed
+        np_chol_covariance = self.cov_obj.upper_chol_covariance_with_sparse_solver(sess=sess, feed_dict=feed_dict,
+                                                                                   sparse_format=True)
+
+        batch = np_chol_covariance.shape[0]
+        num_x1 = len(x1_idx)
+        num_x2 = len(x2_idx)
+        n = num_x1 + num_x2
+        dtype = np_chol_covariance[0][0].dtype
+
+        # Get the rows containing the values for x2, equivalent to the line below for a dense matrix
+        # np_chol_covariance_21_22 = np_chol_covariance[:, x2_idx]
+        np_chol_covariance_21_22 = np.zeros([batch, num_x2, n], dtype=dtype)
+        for i in range(num_x2):
+            num_elems = np_chol_covariance[0][x2_idx[i]].shape[0]
+            for b in range(batch):
+                np_chol_covariance_21_22[b, i, -num_elems:] = np_chol_covariance[b][x2_idx[i]]
+
+        # Matmul those rows to get the rows in the covariance for x2, equivalent to the line below
+        # np_covariance_21_22 = np.matmul(np_chol_covariance_21_22, np_chol_covariance.transpose((0, 2, 1)))
+        np_covariance_21_22 = np.zeros([batch, num_x2, n], dtype=dtype)
+        for k in trange(num_x2, desc='dot_product_chol_covariance_to_covariance'):
+            for b in range(batch):
+                j = n
+                for i in range(n):
+                    # Dot product ignoring the zero elements as required per iteration in np_chol_covariance_21_22
+                    np_covariance_21_22[b, k, i] = np.dot(np_chol_covariance_21_22[b, k, -j:],
+                                                          np_chol_covariance[b][i])
+                    j -= 1
+
+        # Delete this cholesky matrix as soon as it is no longer needed
+        del np_chol_covariance
+
+        # Covariance_22 is the how the x2 elements affect each other, [batch, num_x2, num_x2]
+        np_covariance_22 = np_covariance_21_22[:, :, x2_idx]
+        # Covariance 21 is how x2 affects the x1 values, [batch, num_x2, num_x1]
+        np_covariance_21 = np_covariance_21_22[:, :, x1_idx]
+
+        return np_covariance_21, np_covariance_22
+
+    def _conditional_mean_covariance_21_22_memory(self, x1_idx, x2_idx, sess, feed_dict):
+        # This is implementation that avoids computing rows in Sigma that will not be used,
+        # and uses a double solve approach to keep the memory costs in check
+        np_covariance_21_22 = self.cov_obj.covariance_with_sparse_solver(sess=sess, feed_dict=feed_dict,
+                                                                         only_x_rows=x2_idx)
+
+        # Covariance_22 is the how the x2 elements affect each other, [batch, num_x2, num_x2]
+        np_covariance_22 = np_covariance_21_22[:, :, x2_idx]
+        # Covariance 21 is how x2 affects the x1 values, [batch, num_x2, num_x1]
+        np_covariance_21 = np_covariance_21_22[:, :, x1_idx]
+
+        return np_covariance_21, np_covariance_22
+
 
 class MultivariateNormalPrecCholFiltersDilation(MultivariateNormal):
     def __init__(self, loc, weights_precision, filters_precision, log_diag_chol_precision, sample_shape,
@@ -536,14 +755,14 @@ class LogNormal(tfd.TransformedDistribution):
         self._parameters = params
 
 
-@kullback_leibler.RegisterKL(MultivariateNormal, MultivariateNormal)
+@tfd.RegisterKL(MultivariateNormal, MultivariateNormal)
 def _kl_mvnd_mvnd(a, b, name=None):
     """Batched KL divergence `KL(a || b)` for multivariate Normals."""
     return kl_divergence_mv_gaussian_v2(mu1=a.loc, mu2=b.loc, sigma1=a.cov_obj, sigma2=b.cov_obj, mean_batch=False,
                                         name=name)
 
 
-@kullback_leibler.RegisterKL(MultivariateNormal, MultivariateNormalLinearOperator)
+@tfd.RegisterKL(MultivariateNormal, MultivariateNormalLinearOperator)
 def _kl_mvnd_tfmvnd(a, b, name=None):
     """Batched KL divergence `KL(a || b)` for multivariate Normals, when "b" is a
     tf.contrib.distributions.MultivariateNormal* distribution"""
@@ -552,7 +771,7 @@ def _kl_mvnd_tfmvnd(a, b, name=None):
                                         name=name)
 
 
-@kullback_leibler.RegisterKL(MultivariateNormalLinearOperator, MultivariateNormal)
+@tfd.RegisterKL(MultivariateNormalLinearOperator, MultivariateNormal)
 def _kl_mvnd_tfmvnd(a, b, name=None):
     """Batched KL divergence `KL(a || b)` for multivariate Normals, when "a" is a
     tf.contrib.distributions.MultivariateNormal* distribution"""
@@ -561,7 +780,7 @@ def _kl_mvnd_tfmvnd(a, b, name=None):
                                         name=name)
 
 
-@kullback_leibler.RegisterKL(MultivariateNormalDiag, IsotropicMultivariateNormal)
+@tfd.RegisterKL(MultivariateNormalDiag, IsotropicMultivariateNormal)
 def _kl_diag_unit(a, b, name=None):
     """Special case of batched KL divergence `KL(a || b)` for multivariate Normals,
     where "a" is diagonal and "b" is the isotropic Gaussian distribution"""

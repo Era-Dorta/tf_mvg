@@ -5,6 +5,7 @@ import tensorflow as tf
 from scipy.ndimage import filters as fi
 from scipy.sparse import lil_matrix
 import scipy.stats
+from tqdm import trange
 
 
 def get_np_replicated_identity_matrix_with_noise(width, height, limit=0.05, dtype=tf.float32):
@@ -156,7 +157,7 @@ def get_np_line_smooth_kernel(kernlen=21, sigma=3.0, is_horizontal=True):
     return kernel
 
 
-def np_make_matrix_from_kernel_list(kernels, img_size, make_sparse=False):
+def np_make_matrix_from_kernel_list(kernels, img_size, make_sparse=False, verbose=False):
     """
     :param kernels: a list or numpy array of [img width * img height, filter width, filter height]
     :param img_size: an integer with the value of img width
@@ -175,7 +176,12 @@ def np_make_matrix_from_kernel_list(kernels, img_size, make_sparse=False):
         matrix = np.zeros((size, size), dtype=kernels[0].dtype)
 
     k = 0
-    for i in range(0, img_size):
+    if verbose:
+        row_iterator = trange(0, img_size)
+    else:
+        row_iterator = range(0, img_size)
+
+    for i in row_iterator:
         for j in range(0, img_size):
             filter_ij = kernels[k]
             padding_w0 = i - filters_w_half
@@ -204,7 +210,14 @@ def np_make_matrix_from_kernel_list(kernels, img_size, make_sparse=False):
             filter_ij = np.pad(filter_ij, padding, mode="constant")
             filter_ij = np.reshape(filter_ij, -1)
 
-            matrix[k] = filter_ij
+            if make_sparse:
+                # Directly save in lil_matrix format, about 4 times faster
+                # than letting it do the conversion automatically with
+                # matrix[k] = filter_ij
+                matrix.rows[k] = np.nonzero(filter_ij)[0].tolist()
+                matrix.data[k] = filter_ij[matrix.rows[k]].tolist()
+            else:
+                matrix[k] = filter_ij
             k += 1
     return matrix
 

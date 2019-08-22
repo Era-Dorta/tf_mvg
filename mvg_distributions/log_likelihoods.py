@@ -87,6 +87,7 @@ def _get_log_det_covariance(log_det_cov, covariance, dtype=tf.float32, name='log
 
     return log_det_cov
 
+
 def _get_k(x, name='k'):
     # Compute the dimensionality of x
     with tf.name_scope(name):
@@ -96,6 +97,7 @@ def _get_k(x, name='k'):
             # Dimensionality of x is not known
             k = tf.cast(tf.shape(x)[-1], x.dtype)
         return k
+
 
 def _get_k_log_2_pi(k_log_2_pi, x, name='k_log_2_pi'):
     # Compute k * log(2*pi), where k is the dimensionality of x
@@ -205,8 +207,9 @@ def neg_log_likelihood_unit_gaussian(predictions, labels=None, mean_batch=True,
             squared_error = tf.reduce_mean(squared_error)
         return 0.5 * (squared_error + k_log_2_pi)
 
+
 def neg_log_likelihood_spherical_gaussian(predictions, log_variance, labels=None, mean_batch=True,
-                                     name='neg_log_likelihood_unit_gaussian'):
+                                          name='neg_log_likelihood_unit_gaussian'):
     """ Negative log likelihood of a Gaussian distribution with a single log variance parameter per image
         Predictions and labels are batches of Nx[S]xK data
     """
@@ -221,12 +224,12 @@ def neg_log_likelihood_spherical_gaussian(predictions, log_variance, labels=None
             squared_error = tf.square(predictions)
         else:
             squared_error = tf.squared_difference(labels, predictions)
-        squared_error *= tf.reshape(tf.exp(log_variance*-1.0), [-1,1])
+        squared_error *= tf.reshape(tf.exp(log_variance * -1.0), [-1, 1])
         squared_error = tf.reduce_sum(squared_error, axis=-1)
         if mean_batch:
             squared_error = tf.reduce_mean(squared_error) + tf.reduce_mean(log_variance)
         else:
-            squared_error += _get_k(predictions)*log_variance
+            squared_error += _get_k(predictions) * log_variance
         return 0.5 * (squared_error + k_log_2_pi)
 
 

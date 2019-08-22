@@ -18,10 +18,10 @@ def kl_divergence_gaussian(mu1, log_sigma_sq1, mu2, log_sigma_sq2, mean_batch=Tr
     with tf.name_scope(name):
         k = tf.cast(tf.shape(mu1), mu1.dtype)[1]  # Number of features
         kl_div = 0.5 * (
-                tf.reduce_sum(log_sigma_sq2, axis=1) - tf.reduce_sum(log_sigma_sq1, axis=1) -  # log(|sigma1|/|sigma2|)
-                k +  # -k
-                tf.reduce_sum(tf.exp(log_sigma_sq1 - log_sigma_sq2), axis=1) +  # trace(inv(sigma1) sigma2)
-                tf.einsum('bi,bi->b', (mu2 - mu1) ** 2, tf.exp(-log_sigma_sq2))  # (mu2 - mu1)^T inv(sigma2) (mu2 - mu1)
+            tf.reduce_sum(log_sigma_sq2, axis=1) - tf.reduce_sum(log_sigma_sq1, axis=1) -  # log(|sigma1|/|sigma2|)
+            k +  # -k
+            tf.reduce_sum(tf.exp(log_sigma_sq1 - log_sigma_sq2), axis=1) +  # trace(inv(sigma1) sigma2)
+            tf.einsum('bi,bi->b', (mu2 - mu1) ** 2, tf.exp(-log_sigma_sq2))  # (mu2 - mu1)^T inv(sigma2) (mu2 - mu1)
         )
         if mean_batch:
             return tf.reduce_mean(kl_div, axis=0)

@@ -72,7 +72,7 @@ class _CovarianceEigCommon(Covariance):
 
             squared_error = tf.reduce_sum(squared_error, axis=2)  # Error per sample
             if squared_error.shape[1].value == 1:
-                squared_error = tf.squeeze(squared_error, axis=1, name="x_precision_x") # Remove sample dim
+                squared_error = tf.squeeze(squared_error, axis=1, name="x_precision_x")  # Remove sample dim
 
             if mean_batch:
                 squared_error = tf.reduce_mean(squared_error, name="mean_x_precision_x")
@@ -335,7 +335,7 @@ class PrecisionEigDiag(_CovarianceEigDiagCommon):
 
             squared_error = tf.reduce_sum(squared_error, axis=2)  # Error per sample
             if squared_error.shape[1].value == 1:
-                squared_error = tf.squeeze(squared_error, axis=1, name="x_precision_x") # Remove sample dim
+                squared_error = tf.squeeze(squared_error, axis=1, name="x_precision_x")  # Remove sample dim
 
             if mean_batch:
                 squared_error = tf.reduce_mean(squared_error, name="mean_x_precision_x")

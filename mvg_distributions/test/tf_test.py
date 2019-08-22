@@ -52,6 +52,9 @@ class TFTest(unittest.TestCase):
         config = get_default_session_config()
         self.sess = tf.Session(config=config)
 
+    def _assert_allclose_np_np(self, np_input, np_output):
+        np.testing.assert_allclose(np_input, np_output, rtol=self.rtol, atol=self.atol)
+
     def _assert_allclose_tf_np(self, tf_input, np_output):
         tf_result = self.sess.run(tf_input, feed_dict=self.tf_feed)
         np.testing.assert_allclose(tf_result, np_output, rtol=self.rtol, atol=self.atol)

@@ -8,6 +8,7 @@ import mvg_distributions.gamma as custom_dist
 from mvg_distributions.test.test_losses_base import LossesTestBase
 
 tf_dist = tensorflow_probability.distributions
+tf_bij = tensorflow_probability.bijectors
 
 
 class TestGamma(LossesTestBase):
@@ -21,12 +22,15 @@ class TestGamma(LossesTestBase):
 
         concentration = np.random.normal(size=(self.batch_size, self.features_size))
         concentration = np.abs(concentration) + eps
+        concentration = concentration.astype(self.dtype.as_numpy_dtype)
 
         rate = np.random.normal(size=(self.batch_size, self.features_size))
         rate = np.abs(rate) + eps
+        rate = rate.astype(self.dtype.as_numpy_dtype)
 
         inv_variance = np.random.normal(size=(self.batch_size, self.features_size))
         inv_variance = np.abs(inv_variance) + eps
+        inv_variance = inv_variance.astype(self.dtype.as_numpy_dtype)
 
         return inv_variance, concentration, rate
 
@@ -111,6 +115,41 @@ class TestGamma(LossesTestBase):
         sample2 = self.gamma_base.sample(seed=0)
 
         self._asset_allclose_tf_feed(sample1, sample2)
+
+
+class TestSqrtGamma(TestGamma):
+    def _create_single_gamma_pair(self):
+        x, concentration, rate = self._random_gamma_params()
+        log_x = np.log(x)
+
+        gamma_base = tf_dist.Gamma(concentration=concentration, rate=rate)
+        sqrt_bij = tf_bij.Invert(tf_bij.Square())  # Square root
+        sqrt_gamma_base = tf_dist.TransformedDistribution(distribution=gamma_base,
+                                                          bijector=sqrt_bij)
+
+        sqrt_gamma_test = custom_dist.SqrtGamma(concentration=concentration, rate=rate)
+
+        return x, log_x, sqrt_gamma_base, sqrt_gamma_test
+
+    @unittest.skip("Not implemented in SqrtGamma")
+    def test__entropy(self):
+        pass
+
+    @unittest.skip("Not implemented in SqrtGamma")
+    def test__kl_div1(self):
+        pass
+
+    @unittest.skip("Not implemented in SqrtGamma")
+    def test__kl_div2(self):
+        pass
+
+    @unittest.skip("Not implemented in SqrtGamma")
+    def test_stddev(self):
+        pass
+
+    @unittest.skip("Not implemented in SqrtGamma")
+    def test_variance(self):
+        pass
 
 
 if __name__ == '__main__':

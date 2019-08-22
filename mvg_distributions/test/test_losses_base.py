@@ -6,7 +6,6 @@ from mvg_distributions.test.tf_test import TFTest
 
 
 class LossesTestBase(TFTest):
-
     def setUp(self):
         super().setUp()
 
