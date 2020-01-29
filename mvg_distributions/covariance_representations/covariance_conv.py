@@ -908,8 +908,11 @@ class PrecisionConvCholFilters(PrecisionConvFilters):
             if cache_values:
                 print('Saving indices for the sparse matrix in')
                 print(indices_save_path)
-                np.savez(indices_save_path, l_indices_0=self._l_indices[0], l_indices_1=self._l_indices[1],
-                         t_indices=self._t_indices)
+                try:
+                    np.savez(indices_save_path, l_indices_0=self._l_indices[0], l_indices_1=self._l_indices[1],
+                             t_indices=self._t_indices)
+                except IOError as exc:
+                    print('Could not save indices data file\n\t{}'.format(exc))
 
         return self._l_indices, self._t_indices
 
